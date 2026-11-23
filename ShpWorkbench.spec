@@ -1,19 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
-binaries = []
-hiddenimports = []
-tmp_ret = collect_all('pyogrio')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-
+pyogrio_datas, pyogrio_binaries, pyogrio_imports = collect_all("pyogrio")
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=pyogrio_binaries,
+    datas=pyogrio_datas + [("shp_tool/data/土地利用.gpkg", "shp_tool/data")],
+    hiddenimports=pyogrio_imports + ["pyogrio._geometry", "openpyxl"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

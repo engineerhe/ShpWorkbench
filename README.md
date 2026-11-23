@@ -55,3 +55,6 @@ python main.py
 - `ui`: 只负责参数收集、预览、任务状态展示，不直接承载 GIS 算法。
 
 后续建议引入统一算法接口、参数模型、执行上下文和任务管理器；耗时任务迁移到 QThreadPool/QRunnable，避免当前同步批处理阻塞 GUI。当前版本以可运行的单机 MVP 为目标，批处理期间界面会短暂阻塞，适合先验证业务流程。
+
+## 7.打包操作
+python -m PyInstaller --clean --noconfirm ShpWorkbench.spec

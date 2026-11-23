@@ -8,7 +8,14 @@ from PySide6.QtWidgets import (
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from .processing import read_shp, batch_export, OPS
+from .processing import read_shp, batch_export, GRADE_RULES, OPS
+
+DEFAULT_OUTPUTS = {
+    "最大水深": "YMSS",
+    "最大流速": "HSLS",
+    "淹没历时": "YMLS",
+    "fst": "DDSJ",
+}
 
 class MapCanvas(FigureCanvasQTAgg):
     def __init__(self):
@@ -67,7 +74,7 @@ class MainWindow(QMainWindow):
         self.mapping_table = QTableWidget(0, 2)
         self.mapping_table.setHorizontalHeaderLabels(["源字段", "输出字段"])
         self.mapping_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        cv.addWidget(QLabel("字段映射（仅勾选/填写有效的映射行会导出；输出字段名最多 10 个字符）"))
+        cv.addWidget(QLabel("选择输出指标，留空跳过该行。选择多个指标时分别导出，每份自动添加 Grade 和 Describe。"))
         cv.addWidget(self.mapping_table)
         mb = QHBoxLayout()
         add_map = QPushButton("添加映射行"); add_map.clicked.connect(self.add_mapping_row)
@@ -98,6 +105,9 @@ class MainWindow(QMainWindow):
         form.addRow("输出目标 CRS：", self.target_crs)
         ev.addLayout(form)
         self.recursive = QCheckBox("递归处理输入文件夹的所有子目录"); self.recursive.setChecked(True); ev.addWidget(self.recursive)
+        self.statistics_enabled = QCheckBox("统计淹没面积")
+        self.statistics_enabled.setToolTip("将淹没面积统计表保存到输出文件夹")
+        ev.addWidget(self.statistics_enabled)
         self.run_btn = QPushButton("开始批量处理"); self.run_btn.clicked.connect(self.run_batch); ev.addWidget(self.run_btn)
         self.progress = QProgressBar(); ev.addWidget(self.progress)
         self.log = QTableWidget(0, 3); self.log.setHorizontalHeaderLabels(["文件", "状态", "详情"])
@@ -134,10 +144,15 @@ class MainWindow(QMainWindow):
         if self.current_gdf is None: return
         cols = [c for c in self.current_gdf.columns if c != self.current_gdf.geometry.name]
         self.mapping_table.setRowCount(len(cols))
+        assigned = set()
         for r, c in enumerate(cols):
             combo = QComboBox(); combo.addItems(cols); combo.setCurrentText(c)
             self.mapping_table.setCellWidget(r, 0, combo)
-            self.mapping_table.setItem(r, 1, QTableWidgetItem(str(c)[:10]))
+            output = self.add_output_combo(r)
+            preferred = c.upper() if c.upper() in GRADE_RULES else DEFAULT_OUTPUTS.get(c, "")
+            if preferred and preferred not in assigned:
+                output.setCurrentText(preferred)
+                assigned.add(preferred)
 
     def add_mapping_row(self):
         r = self.mapping_table.rowCount(); self.mapping_table.insertRow(r)
@@ -145,7 +160,13 @@ class MainWindow(QMainWindow):
         if self.current_gdf is not None:
             combo.addItems([c for c in self.current_gdf.columns if c != self.current_gdf.geometry.name])
         self.mapping_table.setCellWidget(r, 0, combo)
-        self.mapping_table.setItem(r, 1, QTableWidgetItem(""))
+        self.add_output_combo(r)
+
+    def add_output_combo(self, row):
+        combo = QComboBox()
+        combo.addItems(["", *GRADE_RULES])
+        self.mapping_table.setCellWidget(row, 1, combo)
+        return combo
 
     def add_filter_row(self):
         r = self.filter_table.rowCount(); self.filter_table.insertRow(r)
@@ -160,9 +181,11 @@ class MainWindow(QMainWindow):
         mapping = []
         for r in range(self.mapping_table.rowCount()):
             combo = self.mapping_table.cellWidget(r, 0)
-            dst = self.mapping_table.item(r, 1)
-            if combo and dst and dst.text().strip():
-                mapping.append((combo.currentText(), dst.text().strip()))
+            dst = self.mapping_table.cellWidget(r, 1)
+            if combo and dst and dst.currentText():
+                mapping.append((combo.currentText(), dst.currentText()))
+        if not mapping:
+            raise ValueError("请选择至少一个输出字段")
         # Avoid duplicate output names.
         outputs = [x[1] for x in mapping]
         if len(outputs) != len(set(outputs)):
@@ -190,7 +213,10 @@ class MainWindow(QMainWindow):
         src, dst = self.input_dir.text().strip(), self.output_dir.text().strip()
         if not src or not dst:
             QMessageBox.warning(self, "参数不完整", "请先选择输入文件夹和输出文件夹"); return
-        try: config = self.get_config()
+        try:
+            config = self.get_config()
+            if self.statistics_enabled.isChecked():
+                config["statistics_dir"] = dst
         except Exception as e:
             QMessageBox.critical(self, "配置错误", str(e)); return
         self.log.setRowCount(0); self.progress.setValue(0); self.run_btn.setEnabled(False)
